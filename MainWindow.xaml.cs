@@ -70,6 +70,8 @@ namespace FilesToClipboard
             if (SelectedPaths.Count == 0) return;
 
             var sb = new StringBuilder();
+            if(!string.IsNullOrWhiteSpace(prefixText.Text))
+                sb.AppendLine(prefixText.Text);
             foreach (var filePath in SelectedPaths)
             {
                 if (File.Exists(filePath))
@@ -80,6 +82,8 @@ namespace FilesToClipboard
                     sb.AppendLine();
                 }
             }
+            if (!string.IsNullOrWhiteSpace(suffixText.Text))
+                sb.AppendLine(suffixText.Text);
 
             Clipboard.SetText(sb.ToString());
         }
@@ -93,6 +97,10 @@ namespace FilesToClipboard
         private void btnClear_Click(object sender, RoutedEventArgs e)
         {
             SelectedPaths.Clear();
+        }
+        private void btnClearTexts_Click(object sender, RoutedEventArgs e)
+        {
+            prefixText.Text = suffixText.Text = string.Empty;
         }
 
         // ** New Paste Path button handler **

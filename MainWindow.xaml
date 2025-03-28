@@ -10,7 +10,8 @@
         AllowDrop="True"
         DragOver="Window_DragOver"
         Drop="Window_Drop"
-        Top="100">
+        Top="100"
+        Topmost="True">
 
     <Window.Resources>
         <local:FileNameConverter x:Key="FileNameConverter" />
@@ -57,7 +58,9 @@
     <Grid Margin="10">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <!-- Top control bar -->
@@ -74,12 +77,14 @@
                         Click="btnPastePath_Click"/>
                 <Button x:Name="btnClear" Content="Clear" Background="DarkRed"
                         Click="btnClear_Click"/>
+                <Button x:Name="btnClearTexts" Content="Clear texts" Background="DarkRed"
+                        Click="btnClearTexts_Click"/>
             </StackPanel>
         </DockPanel>
-
+        <TextBox Margin="0,10,0,0" x:Name="prefixText" Grid.Row="1" MaxHeight="200" TextWrapping="Wrap" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" ></TextBox>
         <!-- List of Selected Paths -->
         <ListBox x:Name="lstSelectedPaths"
-                 Grid.Row="1"
+                 Grid.Row="2"
                  Margin="0,10,0,0"
                  ItemsSource="{Binding SelectedPaths}"
                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
@@ -116,5 +121,6 @@
                 </DataTemplate>
             </ListBox.ItemTemplate>
         </ListBox>
+        <TextBox Margin="0,10,0,0" x:Name="suffixText" Grid.Row="3" MaxHeight="200" TextWrapping="Wrap" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" ></TextBox>
     </Grid>
 </Window>
