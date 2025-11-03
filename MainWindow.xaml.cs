@@ -8,11 +8,16 @@ using System.Linq;
 using System.Text;
 using System.Windows;
 using System.Windows.Data;
+using System.Collections.Specialized;     // StringCollection
+using System.Windows.Controls;            // ListBox
+using System.Windows.Input;               // Mouse*, DragDrop
 
 namespace FilesToClipboard
 {
     public partial class MainWindow : Window
     {
+        private Point _dragStart;
+
         public ObservableCollection<string> SelectedPaths { get; }
             = new ObservableCollection<string>();
 
@@ -178,6 +183,46 @@ namespace FilesToClipboard
                 }
             }
             e.Handled = true;
+        }
+        private void lstSelectedPaths_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            _dragStart = e.GetPosition(null);
+        }
+
+        private void lstSelectedPaths_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (e.LeftButton != MouseButtonState.Pressed) return;
+
+            var pos = e.GetPosition(null);
+            if (Math.Abs(pos.X - _dragStart.X) < SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(pos.Y - _dragStart.Y) < SystemParameters.MinimumVerticalDragDistance)
+                return;
+
+            var lb = (ListBox)sender;
+            var files = lb.SelectedItems.Cast<string>()
+                           .Where(p => File.Exists(p))
+                           .ToArray();
+            if (files.Length == 0) return;
+
+            // Build CF_HDROP payload
+            var sc = new StringCollection();
+            sc.AddRange(files);
+
+            var data = new DataObject();
+            data.SetFileDropList(sc);                               // primary payload
+            data.SetText(string.Join(Environment.NewLine, files));  // optional convenience
+
+            // Topmost windows can cover Explorer during drag; temporarily lower.
+            bool wasTopmost = this.Topmost;
+            try
+            {
+                this.Topmost = false;
+                DragDrop.DoDragDrop(lb, data, DragDropEffects.Copy);
+            }
+            finally
+            {
+                this.Topmost = wasTopmost;
+            }
         }
 
 
