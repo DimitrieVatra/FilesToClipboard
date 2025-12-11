@@ -3,7 +3,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:FilesToClipboard"
         Title="File Content Collector"
-        Width="960" Height="540"
+        Width="960" MinHeight="600"
+        SizeToContent="Height"
         WindowStartupLocation="Manual"
         Left="100" Top="100"
         Topmost="True"
@@ -15,11 +16,11 @@
         DragOver="Window_DragOver"
         Drop="Window_Drop">
 
-    <!-- THEME + STYLES -->
     <Window.Resources>
         <local:FileNameConverter x:Key="FileNameConverter" />
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
 
-        <!-- Dark palette (default). Light values set from code-behind via ApplyTheme -->
+        <!-- Dark palette -->
         <SolidColorBrush x:Key="Brush.Surface"        Color="#0F0F10"/>
         <SolidColorBrush x:Key="Brush.Card"           Color="#17171A"/>
         <SolidColorBrush x:Key="Brush.CardBorder"     Color="#26262A"/>
@@ -30,6 +31,9 @@
         <SolidColorBrush x:Key="Brush.AccentHover"    Color="#4A84DF"/>
         <SolidColorBrush x:Key="Brush.Success"        Color="#2E7D32"/>
         <SolidColorBrush x:Key="Brush.Danger"         Color="#C62828"/>
+
+        <!-- Slight tint for unresolved tabs -->
+        <SolidColorBrush x:Key="Brush.TabUnresolvedBackground" Color="#1A5B9BFF"/>
 
         <!-- Button base -->
         <Style x:Key="ModernButton" TargetType="Button">
@@ -178,139 +182,339 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <!-- TabControl with "+" button -->
+        <Style TargetType="TabControl">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabControl">
+                        <DockPanel>
+                            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal">
+                                <TabPanel x:Name="HeaderPanel"
+                                          Panel.ZIndex="1"
+                                          IsItemsHost="True"
+                                          Margin="0,0,4,0" />
+                                <Button Content="+"
+                                        Width="28"
+                                        Height="24"
+                                        Margin="0,0,0,0"
+                                        Padding="0"
+                                        Style="{StaticResource ModernButton}"
+                                        Click="AddTabButton_Click"/>
+                            </StackPanel>
+                            <Border BorderBrush="{DynamicResource Brush.CardBorder}"
+                                    BorderThickness="1"
+                                    CornerRadius="10"
+                                    Background="{DynamicResource Brush.Card}"
+                                    Margin="0,6,0,0">
+                                <ContentPresenter x:Name="PART_SelectedContentHost"
+                                                  Margin="0"
+                                                  ContentSource="SelectedContent" />
+                            </Border>
+                        </DockPanel>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- TabItem style: underline color + hover close -->
+        <Style TargetType="TabItem">
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text}" />
+            <Setter Property="Padding" Value="8,4" />
+            <Setter Property="Margin" Value="0,0,4,0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="RootBorder"
+                                CornerRadius="8,8,0,0"
+                                Background="{TemplateBinding Background}"
+                                SnapsToDevicePixels="True">
+                            <Border BorderThickness="0,0,0,2"
+                                    BorderBrush="{Binding UnderlineBrush}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0"
+                                               Text="{Binding Header}"
+                                               Margin="10,2,4,2"
+                                               TextTrimming="CharacterEllipsis"
+                                               VerticalAlignment="Center" />
+                                    <Button x:Name="CloseButton"
+                                            Grid.Column="1"
+                                            Width="18"
+                                            Height="18"
+                                            Margin="0,0,6,0"
+                                            Padding="0"
+                                            Style="{StaticResource ModernButton}"
+                                            Background="Transparent"
+                                            BorderThickness="0"
+                                            ToolTip="Close tab"
+                                            Visibility="Collapsed"
+                                            Click="TabCloseButton_Click">
+                                        <TextBlock Text="&#xE711;"
+                                                   FontFamily="Segoe MDL2 Assets"
+                                                   FontSize="10" />
+                                    </Button>
+                                </Grid>
+                            </Border>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="CloseButton" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="RootBorder" Property="Background" Value="{DynamicResource Brush.Card}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.6" />
+                            </Trigger>
+                            <DataTrigger Binding="{Binding IsResolved}" Value="False">
+                                <Setter TargetName="RootBorder" Property="Background" Value="{DynamicResource Brush.TabUnresolvedBackground}" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding IsResolved}" Value="True">
+                                <Setter TargetName="RootBorder" Property="Background" Value="Transparent" />
+                            </DataTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
-    <!-- LAYOUT -->
-    <Grid Margin="14">
-        <Grid.RowDefinitions>
+    <Grid>
+        <TabControl x:Name="tabControl"
+                    Margin="14"
+                    ItemsSource="{Binding Tabs}">
+            <TabControl.ContentTemplate>
+                <DataTemplate>
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
 
-            <RowDefinition Height="Auto"/>
+                        <!-- Title + Command bar -->
+                        <Border Grid.Row="0"
+                                CornerRadius="12"
+                                Background="{DynamicResource Brush.Card}"
+                                BorderBrush="{DynamicResource Brush.CardBorder}"
+                                BorderThickness="1"
+                                Padding="10"
+                                Margin="0,0,0,10">
+                            <DockPanel LastChildFill="False">
+                                <StackPanel DockPanel.Dock="Left"
+                                            Orientation="Vertical"
+                                            Margin="2,0,16,0">
+                                    <TextBlock Text="File Content Collector"
+                                               FontSize="18"
+                                               FontWeight="SemiBold"/>
+                                    <TextBlock Text="Collect, preview, and export concatenated file contents"
+                                               Foreground="{DynamicResource Brush.TextSecondary}"
+                                               FontSize="12"/>
+                                </StackPanel>
 
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
-        <!-- Title + Command bar -->
-        <Border CornerRadius="12" Background="{DynamicResource Brush.Card}" BorderBrush="{DynamicResource Brush.CardBorder}" BorderThickness="1" Padding="10" Margin="0,0,0,10">
-            <DockPanel LastChildFill="False">
-                <StackPanel DockPanel.Dock="Left" Orientation="Vertical" Margin="2,0,16,0">
-                    <TextBlock Text="File Content Collector" FontSize="18" FontWeight="SemiBold"/>
-                    <TextBlock Text="Collect, preview, and export concatenated file contents" Foreground="{DynamicResource Brush.TextSecondary}" FontSize="12"/>
-                </StackPanel>
+                                <!-- Unresolve (only on resolved tabs) -->
+                                <Button DockPanel.Dock="Right"
+                                        Style="{StaticResource ModernButton}"
+                                        Margin="6,0,0,0"
+                                        Visibility="{Binding IsResolved, Converter={StaticResource BoolToVis}}"
+                                        Click="btnUnresolve_Click">
+                                    <StackPanel Orientation="Horizontal" Margin="10,0">
+                                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE777;" Margin="0,0,6,0"/>
+                                        <TextBlock Text="Unresolve"/>
+                                    </StackPanel>
+                                </Button>
 
-               
+                                <!-- Primary action -->
+                                <Button DockPanel.Dock="Right"
+                                        Style="{StaticResource AccentButton}"
+                                        Margin="6,0,0,0"
+                                        ToolTip="Copy all selected files' contents with prefix/suffix"
+                                        Click="btnCopy_Click">
+                                    <Button.Content>
+                                        <StackPanel Orientation="Horizontal" Margin="10,0">
+                                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8C8;" Margin="0,0,6,0"/>
+                                            <TextBlock Text="Copy"/>
+                                        </StackPanel>
+                                    </Button.Content>
+                                </Button>
 
-                <!-- Primary action -->
-                <Button x:Name="btnCopy"
-                        DockPanel.Dock="Right" Style="{StaticResource AccentButton}" Margin="6,0,0,0"
-                        ToolTip="Copy all selected files' contents with prefix/suffix"
-                        Click="btnCopy_Click">
-                    <Button.Content>
-                        <StackPanel Orientation="Horizontal" Margin="10,0">
-                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8C8;" Margin="0,0,6,0"/>
-                            <TextBlock Text="Copy"/>
-                        </StackPanel>
-                    </Button.Content>
-                </Button>
+                                <!-- Secondary actions -->
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Style="{StaticResource ModernButton}"
+                                            Click="btnSelectFiles_Click"
+                                            ToolTip="Add files">
+                                        <StackPanel Orientation="Horizontal" Margin="10,0">
+                                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8E5;" Margin="0,0,6,0"/>
+                                            <TextBlock Text="Files"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Style="{StaticResource ModernButton}"
+                                            Click="btnSelectDirs_Click"
+                                            ToolTip="Add directories (recursive)">
+                                        <StackPanel Orientation="Horizontal" Margin="10,0">
+                                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8B7;" Margin="0,0,6,0"/>
+                                            <TextBlock Text="Folders"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Style="{StaticResource ModernButton}"
+                                            Click="btnPastePath_Click"
+                                            ToolTip="Paste path(s) from clipboard">
+                                        <StackPanel Orientation="Horizontal" Margin="10,0">
+                                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE77F;" Margin="0,0,6,0"/>
+                                            <TextBlock Text="Paste Path"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Style="{StaticResource DangerButton}"
+                                            Click="btnClear_Click"
+                                            ToolTip="Clear list">
+                                        <StackPanel Orientation="Horizontal" Margin="10,0">
+                                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE74D;" Margin="0,0,6,0"/>
+                                            <TextBlock Text="Clear"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Style="{StaticResource ModernButton}"
+                                            Click="btnClearTexts_Click"
+                                            ToolTip="Clear prefix/suffix">
+                                        <StackPanel Orientation="Horizontal" Margin="10,0">
+                                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE894;" Margin="0,0,6,0"/>
+                                            <TextBlock Text="Clear Texts"/>
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
 
-                <!-- Secondary actions -->
-                <StackPanel Orientation="Horizontal">
-                    <Button x:Name="btnSelectFiles" Style="{StaticResource ModernButton}" Click="btnSelectFiles_Click" ToolTip="Add files">
-                        <StackPanel Orientation="Horizontal" Margin="10,0">
-                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8E5;" Margin="0,0,6,0"/>
-                            <TextBlock Text="Files"/>
-                        </StackPanel>
-                    </Button>
-                    <Button x:Name="btnSelectDirs" Style="{StaticResource ModernButton}" Click="btnSelectDirs_Click" ToolTip="Add directories (recursive)">
-                        <StackPanel Orientation="Horizontal"  Margin="10,0">
-                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8B7;" Margin="0,0,6,0"/>
-                            <TextBlock Text="Folders"/>
-                        </StackPanel>
-                    </Button>
-                    <Button x:Name="btnPastePath" Style="{StaticResource ModernButton}" Click="btnPastePath_Click" ToolTip="Paste path(s) from clipboard">
-                        <StackPanel Orientation="Horizontal"  Margin="10,0">
-                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE77F;" Margin="0,0,6,0"/>
-                            <TextBlock Text="Paste Path"/>
-                        </StackPanel>
-                    </Button>
-                    <Button x:Name="btnClear" Style="{StaticResource DangerButton}" Click="btnClear_Click" ToolTip="Clear list">
-                        <StackPanel Orientation="Horizontal"  Margin="10,0">
-                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE74D;" Margin="0,0,6,0"/>
-                            <TextBlock Text="Clear"/>
-                        </StackPanel>
-                    </Button>
-                    <Button x:Name="btnClearTexts" Style="{StaticResource ModernButton}" Click="btnClearTexts_Click" ToolTip="Clear prefix/suffix">
-                        <StackPanel Orientation="Horizontal" Margin="10,0">
-                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE894;" Margin="0,0,6,0"/>
-                            <TextBlock Text="Clear Texts"/>
-                        </StackPanel>
-                    </Button>
-                </StackPanel>
-            </DockPanel>
-        </Border>
+                        <!-- Prefix -->
+                        <Border Grid.Row="1"
+                                CornerRadius="10"
+                                Background="{DynamicResource Brush.Card}"
+                                BorderBrush="{DynamicResource Brush.CardBorder}"
+                                BorderThickness="1"
+                                Padding="8"
+                                Margin="0,0,0,10">
+                            <DockPanel>
+                                <TextBlock DockPanel.Dock="Left"
+                                           Text="Prefix"
+                                           Width="60"
+                                           VerticalAlignment="Top"
+                                           Margin="0,4,8,0"
+                                           Foreground="{DynamicResource Brush.TextSecondary}"/>
+                                <TextBox Text="{Binding PrefixText, UpdateSourceTrigger=PropertyChanged}"
+                                         TextWrapping="Wrap"
+                                         AcceptsReturn="True"
+                                         VerticalScrollBarVisibility="Auto"
+                                         MinHeight="52"
+                                         MaxHeight="250"/>
+                            </DockPanel>
+                        </Border>
 
-        <!-- Prefix -->
-        <Border Grid.Row="1" CornerRadius="10" Background="{DynamicResource Brush.Card}" BorderBrush="{DynamicResource Brush.CardBorder}" BorderThickness="1" Padding="8" Margin="0,0,0,10">
-            <DockPanel>
-                <TextBlock DockPanel.Dock="Left" Text="Prefix" Width="60" VerticalAlignment="Top" Margin="0,4,8,0" Foreground="{DynamicResource Brush.TextSecondary}"/>
-                <TextBox x:Name="prefixText" TextWrapping="Wrap" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" MinHeight="52"/>
-            </DockPanel>
-        </Border>
+                        <!-- Files list -->
+                        <Grid Grid.Row="2" Margin="0,0,0,10">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="Selected files"
+                                       Foreground="{DynamicResource Brush.TextSecondary}"
+                                       Margin="2,0,0,6"/>
+                            <ListBox x:Name="lstSelectedPaths"
+                                     Grid.Row="1"
+                                     ItemsSource="{Binding SelectedPaths}"
+                                     SelectionMode="Extended"
+                                     PreviewMouseLeftButtonDown="lstSelectedPaths_PreviewMouseLeftButtonDown"
+                                     MouseMove="lstSelectedPaths_MouseMove"
+                                     DragOver="lstSelectedPaths_DragOver"
+                                     Drop="lstSelectedPaths_Drop"
+                                     AllowDrop="True"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto">
 
-        <!-- Files list -->
-        <Grid Grid.Row="2" Margin="0,0,0,10">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid HorizontalAlignment="Stretch">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
 
-                <RowDefinition Height="*"/>
-            </Grid.RowDefinitions>
-            <TextBlock Text="Selected files" Foreground="{DynamicResource Brush.TextSecondary}" Margin="2,0,0,6"/>
-            <ListBox x:Name="lstSelectedPaths"
-                     Grid.Row="1"
-                     ItemsSource="{Binding SelectedPaths}"
-                     SelectionMode="Extended"
-                     PreviewMouseLeftButtonDown="lstSelectedPaths_PreviewMouseLeftButtonDown"
-                     MouseMove="lstSelectedPaths_MouseMove"
-                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                     ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                            <!-- Remove -->
+                                            <Button Grid.Column="0"
+                                                    Style="{StaticResource ModernButton}"
+                                                    Padding="8,4"
+                                                    Margin="0,0,10,0"
+                                                    Click="btnRemovePath_Click"
+                                                    ToolTip="Remove">
+                                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE711;"/>
+                                            </Button>
 
-                <ListBox.ItemTemplate>
-                    <DataTemplate>
-                        <Grid HorizontalAlignment="Stretch">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
+                                            <!-- Name + path -->
+                                            <StackPanel Grid.Column="1">
+                                                <TextBlock Text="{Binding Converter={StaticResource FileNameConverter}}"
+                                                           Foreground="{DynamicResource Brush.Text}"
+                                                           FontWeight="SemiBold"/>
+                                                <TextBlock Text="{Binding}"
+                                                           Foreground="{DynamicResource Brush.TextSecondary}"
+                                                           FontSize="12"/>
+                                            </StackPanel>
 
-                            <!-- Remove -->
-                            <Button Grid.Column="0" Style="{StaticResource ModernButton}" Padding="8,4" Margin="0,0,10,0"
-                                    DataContext="{Binding}" Click="btnRemovePath_Click" ToolTip="Remove">
-                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE711;"/>
-                            </Button>
+                                            <!-- Insert file name at caret -->
+                                            <Button Grid.Column="2"
+                                                    Style="{StaticResource ModernButton}"
+                                                    Padding="8,4"
+                                                    Margin="10,0,10,0"
+                                                    Click="btnInsertName_Click"
+                                                    ToolTip="Insert file name at caret">
+                                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8A5;"/>
+                                            </Button>
 
-                            <!-- Name + path -->
-                            <StackPanel Grid.Column="1">
-                                <TextBlock Text="{Binding Converter={StaticResource FileNameConverter}}" Foreground="{DynamicResource Brush.Text}"
-                                           FontWeight="SemiBold"/>
-                                <TextBlock Text="{Binding}" Foreground="{DynamicResource Brush.TextSecondary}" FontSize="12"/>
-                            </StackPanel>
-
-                            <!-- Drag handle icon (visual only) -->
-                            <TextBlock Grid.Column="2" FontFamily="Segoe MDL2 Assets" Text="&#xE76F;" Margin="10,0,0,0"
-                                       VerticalAlignment="Center" Opacity="0.6"/>
+                                            <!-- Drag handle icon (visual only) -->
+                                            <TextBlock Grid.Column="3"
+                                                       FontFamily="Segoe MDL2 Assets"
+                                                       Text="&#xE76F;"
+                                                       Margin="10,0,0,0"
+                                                       VerticalAlignment="Center"
+                                                       Opacity="0.6"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
                         </Grid>
-                    </DataTemplate>
-                </ListBox.ItemTemplate>
-            </ListBox>
-        </Grid>
 
-        <!-- Suffix -->
-        <Border Grid.Row="3" CornerRadius="10" Background="{DynamicResource Brush.Card}" BorderBrush="{DynamicResource Brush.CardBorder}" BorderThickness="1" Padding="8">
-            <DockPanel>
-                <TextBlock DockPanel.Dock="Left" Text="Suffix" Width="60" VerticalAlignment="Top" Margin="0,4,8,0" Foreground="{DynamicResource Brush.TextSecondary}"/>
-                <TextBox x:Name="suffixText" TextWrapping="Wrap" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" MinHeight="52"/>
-            </DockPanel>
-        </Border>
+                        <!-- Suffix -->
+                        <Border Grid.Row="3"
+                                CornerRadius="10"
+                                Background="{DynamicResource Brush.Card}"
+                                BorderBrush="{DynamicResource Brush.CardBorder}"
+                                BorderThickness="1"
+                                Padding="8">
+                            <DockPanel>
+                                <TextBlock DockPanel.Dock="Left"
+                                           Text="Suffix"
+                                           Width="60"
+                                           VerticalAlignment="Top"
+                                           Margin="0,4,8,0"
+                                           Foreground="{DynamicResource Brush.TextSecondary}"/>
+                                <TextBox Text="{Binding SuffixText, UpdateSourceTrigger=PropertyChanged}"
+                                         TextWrapping="Wrap"
+                                         AcceptsReturn="True"
+                                         VerticalScrollBarVisibility="Auto"
+                                         MinHeight="52"
+                                         MaxHeight="250"/>
+                            </DockPanel>
+                        </Border>
+                    </Grid>
+                </DataTemplate>
+            </TabControl.ContentTemplate>
+        </TabControl>
     </Grid>
 </Window>
