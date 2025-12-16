@@ -183,8 +183,8 @@
             </Setter>
         </Style>
 
-        <!-- TabControl with "+" button -->
-        <Style TargetType="TabControl">
+        <!-- TOP-LEVEL TabControl with "+" button -->
+        <Style x:Key="TopTabControlStyle" TargetType="TabControl">
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Template">
@@ -213,6 +213,38 @@
                                                   Margin="0"
                                                   ContentSource="SelectedContent" />
                             </Border>
+                        </DockPanel>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- NESTED (Suffix) TabControl with its own "+" button -->
+        <Style x:Key="SuffixTabControlStyle" TargetType="TabControl">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabControl">
+                        <DockPanel>
+                            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal">
+                                <TabPanel x:Name="HeaderPanel"
+                                          Panel.ZIndex="1"
+                                          IsItemsHost="True"
+                                          Margin="0,0,4,0" />
+                                <Button Content="+"
+                                        Width="28"
+                                        Height="24"
+                                        Margin="0,0,0,0"
+                                        Padding="0"
+                                        Style="{StaticResource ModernButton}"
+                                        Click="AddSuffixTabButton_Click"/>
+                            </StackPanel>
+
+                            <!-- No extra card/border here; the surrounding "Suffix" Border already is a card -->
+                            <ContentPresenter x:Name="PART_SelectedContentHost"
+                                              Margin="0,6,0,0"
+                                              ContentSource="SelectedContent" />
                         </DockPanel>
                     </ControlTemplate>
                 </Setter.Value>
@@ -273,6 +305,8 @@
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Opacity" Value="0.6" />
                             </Trigger>
+
+                            <!-- resolved/unresolved background -->
                             <DataTrigger Binding="{Binding IsResolved}" Value="False">
                                 <Setter TargetName="RootBorder" Property="Background" Value="{DynamicResource Brush.TabUnresolvedBackground}" />
                             </DataTrigger>
@@ -289,6 +323,7 @@
     <Grid>
         <TabControl x:Name="tabControl"
                     Margin="14"
+                    Style="{StaticResource TopTabControlStyle}"
                     ItemsSource="{Binding Tabs}">
             <TabControl.ContentTemplate>
                 <DataTemplate>
@@ -320,11 +355,11 @@
                                                FontSize="12"/>
                                 </StackPanel>
 
-                                <!-- Unresolve (only on resolved tabs) -->
+                                <!-- Unresolve visibility is based on ACTIVE SECOND-LEVEL TAB -->
                                 <Button DockPanel.Dock="Right"
                                         Style="{StaticResource ModernButton}"
                                         Margin="6,0,0,0"
-                                        Visibility="{Binding IsResolved, Converter={StaticResource BoolToVis}}"
+                                        Visibility="{Binding ActiveSuffixTab.IsResolved, Converter={StaticResource BoolToVis}}"
                                         Click="btnUnresolve_Click">
                                     <StackPanel Orientation="Horizontal" Margin="10,0">
                                         <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE777;" Margin="0,0,6,0"/>
@@ -382,7 +417,7 @@
                                     </Button>
                                     <Button Style="{StaticResource ModernButton}"
                                             Click="btnClearTexts_Click"
-                                            ToolTip="Clear prefix/suffix">
+                                            ToolTip="Clear prefix + active suffix">
                                         <StackPanel Orientation="Horizontal" Margin="10,0">
                                             <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE894;" Margin="0,0,6,0"/>
                                             <TextBlock Text="Clear Texts"/>
@@ -412,7 +447,9 @@
                                          AcceptsReturn="True"
                                          VerticalScrollBarVisibility="Auto"
                                          MinHeight="52"
-                                         MaxHeight="250"/>
+                                         MaxHeight="250"
+                                         GotKeyboardFocus="TextBox_GotKeyboardFocus"
+                                         SelectionChanged="TextBox_SelectionChanged"/>
                             </DockPanel>
                         </Border>
 
@@ -467,12 +504,13 @@
                                                            FontSize="12"/>
                                             </StackPanel>
 
-                                            <!-- Insert file name at caret -->
+                                            <!-- Insert file name at caret (fix: remember focus BEFORE click) -->
                                             <Button Grid.Column="2"
                                                     Style="{StaticResource ModernButton}"
                                                     Padding="8,4"
                                                     Margin="10,0,10,0"
                                                     Click="btnInsertName_Click"
+                                                    PreviewMouseLeftButtonDown="InsertNameButton_PreviewMouseLeftButtonDown"
                                                     ToolTip="Insert file name at caret">
                                                 <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8A5;"/>
                                             </Button>
@@ -490,27 +528,43 @@
                             </ListBox>
                         </Grid>
 
-                        <!-- Suffix -->
+                        <!-- Suffix (nested tab control) -->
                         <Border Grid.Row="3"
                                 CornerRadius="10"
                                 Background="{DynamicResource Brush.Card}"
                                 BorderBrush="{DynamicResource Brush.CardBorder}"
                                 BorderThickness="1"
                                 Padding="8">
-                            <DockPanel>
-                                <TextBlock DockPanel.Dock="Left"
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="60"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Grid.Column="0"
                                            Text="Suffix"
-                                           Width="60"
                                            VerticalAlignment="Top"
                                            Margin="0,4,8,0"
                                            Foreground="{DynamicResource Brush.TextSecondary}"/>
-                                <TextBox Text="{Binding SuffixText, UpdateSourceTrigger=PropertyChanged}"
-                                         TextWrapping="Wrap"
-                                         AcceptsReturn="True"
-                                         VerticalScrollBarVisibility="Auto"
-                                         MinHeight="52"
-                                         MaxHeight="250"/>
-                            </DockPanel>
+
+                                <TabControl Grid.Column="1"
+                                            Style="{StaticResource SuffixTabControlStyle}"
+                                            ItemsSource="{Binding SuffixTabs}"
+                                            SelectedItem="{Binding ActiveSuffixTab, Mode=TwoWay}">
+                                    <TabControl.ContentTemplate>
+                                        <DataTemplate>
+                                            <TextBox Text="{Binding SuffixText, UpdateSourceTrigger=PropertyChanged}"
+                                                     TextWrapping="Wrap"
+                                                     AcceptsReturn="True"
+                                                     VerticalScrollBarVisibility="Auto"
+                                                     MinHeight="52"
+                                                     MaxHeight="250"
+                                                     GotKeyboardFocus="TextBox_GotKeyboardFocus"
+                                                     SelectionChanged="TextBox_SelectionChanged"/>
+                                        </DataTemplate>
+                                    </TabControl.ContentTemplate>
+                                </TabControl>
+                            </Grid>
                         </Border>
                     </Grid>
                 </DataTemplate>

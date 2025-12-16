@@ -13,6 +13,7 @@ using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 
 namespace FilesToClipboard
 {
@@ -22,13 +23,19 @@ namespace FilesToClipboard
 
         public ObservableCollection<CollectorTab> Tabs { get; } = new ObservableCollection<CollectorTab>();
 
+        // Tracks the last Prefix/Suffix TextBox the user was editing (caret/selection included),
+        // so Insert-File-Name works even after focus moves to the button.
+        private TextBox _lastTextTarget;
+        private int _lastSelectionStart;
+        private int _lastSelectionLength;
+
         public MainWindow()
         {
             InitializeComponent();
             DataContext = this;
 
             AddNewTab();
-            UpdateTabUnderlineBrushes();
+            UpdateAllUnderlineBrushes();
         }
 
         private CollectorTab GetCurrentTab()
@@ -41,47 +48,70 @@ namespace FilesToClipboard
             var tab = new CollectorTab();
             Tabs.Add(tab);
             tabControl.SelectedItem = tab;
-            UpdateTabUnderlineBrushes();
+
+            UpdateAllUnderlineBrushes();
         }
 
-        private void UpdateTabUnderlineBrushes()
+        /// <summary>
+        /// Global underline calculation across ALL second-level (suffix) tabs in ALL first-level tabs.
+        /// - Oldest suffix tab underline alpha = 0 (transparent)
+        /// - Newest suffix tab underline alpha = accent alpha
+        /// Then:
+        /// - First-level tab underline = underline of newest suffix tab it contains
+        /// </summary>
+        private void UpdateAllUnderlineBrushes()
         {
-            if (Tabs.Count == 0)
-                return;
-
             var accentBrush = TryFindResource("Brush.Accent") as SolidColorBrush
                               ?? new SolidColorBrush(Color.FromRgb(0x5B, 0x9B, 0xFF));
-
             var accentColor = accentBrush.Color;
 
-            var ordered = Tabs.OrderBy(t => t.CreatedAt).ToList();
+            var allSuffixTabs = Tabs.SelectMany(t => t.SuffixTabs).ToList();
+            if (allSuffixTabs.Count == 0)
+            {
+                foreach (var t in Tabs)
+                    t.UnderlineBrush = new SolidColorBrush(Color.FromArgb(0, accentColor.R, accentColor.G, accentColor.B));
+                return;
+            }
+
+            var ordered = allSuffixTabs.OrderBy(t => t.CreatedAt).ToList();
             var oldest = ordered.First();
             var newest = ordered.Last();
 
             if (oldest == newest)
             {
-                foreach (var t in Tabs)
-                    t.UnderlineBrush = new SolidColorBrush(accentColor);
+                foreach (var st in allSuffixTabs)
+                    st.UnderlineBrush = new SolidColorBrush(accentColor);
+
+                foreach (var ft in Tabs)
+                {
+                    var newestChild = ft.SuffixTabs.OrderBy(s => s.CreatedAt).LastOrDefault();
+                    ft.UnderlineBrush = newestChild?.UnderlineBrush ?? new SolidColorBrush(accentColor);
+                }
                 return;
             }
 
             long minTicks = oldest.CreatedAt.Ticks;
             long maxTicks = newest.CreatedAt.Ticks;
             double range = maxTicks - minTicks;
-            if (range <= 0)
-                range = 1;
+            if (range <= 0) range = 1;
 
-            foreach (var t in Tabs)
+            foreach (var st in allSuffixTabs)
             {
-                double factor = (t.CreatedAt.Ticks - minTicks) / range; // 0..1
-                if (t == newest)
-                    factor = 1.0;
-                else if (t == oldest)
-                    factor = 0.0;
+                double factor = (st.CreatedAt.Ticks - minTicks) / range; // 0..1
+                if (st == newest) factor = 1.0;
+                else if (st == oldest) factor = 0.0;
 
                 byte a = (byte)(accentColor.A * factor);
                 var c = Color.FromArgb(a, accentColor.R, accentColor.G, accentColor.B);
-                t.UnderlineBrush = new SolidColorBrush(c);
+                st.UnderlineBrush = new SolidColorBrush(c);
+            }
+
+            // First-level underline = newest suffix tab's underline inside that first-level tab.
+            foreach (var ft in Tabs)
+            {
+                var newestChild = ft.SuffixTabs.OrderBy(s => s.CreatedAt).LastOrDefault();
+                ft.UnderlineBrush = newestChild?.UnderlineBrush
+                                    ?? new SolidColorBrush(Color.FromArgb(0, accentColor.R, accentColor.G, accentColor.B));
             }
         }
 
@@ -177,6 +207,9 @@ namespace FilesToClipboard
 
             if (tab.SelectedPaths.Count == 0) return;
 
+            var activeSuffix = tab.ActiveSuffixTab;
+            if (activeSuffix == null) return;
+
             var sb = new StringBuilder();
 
             if (!string.IsNullOrWhiteSpace(tab.PrefixText))
@@ -193,11 +226,13 @@ namespace FilesToClipboard
                 }
             }
 
-            if (!string.IsNullOrWhiteSpace(tab.SuffixText))
-                sb.AppendLine(tab.SuffixText);
+            if (!string.IsNullOrWhiteSpace(activeSuffix.SuffixText))
+                sb.AppendLine(activeSuffix.SuffixText);
 
             Clipboard.SetText(sb.ToString());
-            tab.IsResolved = true;
+
+            // Resolve ONLY the active second-level suffix tab.
+            activeSuffix.IsResolved = true;
         }
 
         private void btnUnresolve_Click(object sender, RoutedEventArgs e)
@@ -205,7 +240,10 @@ namespace FilesToClipboard
             var tab = (sender as FrameworkElement)?.DataContext as CollectorTab;
             if (tab == null) return;
 
-            tab.IsResolved = false;
+            var activeSuffix = tab.ActiveSuffixTab;
+            if (activeSuffix == null) return;
+
+            activeSuffix.IsResolved = false;
         }
 
         private void btnRemovePath_Click(object sender, RoutedEventArgs e)
@@ -234,7 +272,13 @@ namespace FilesToClipboard
             if (tab == null) return;
 
             tab.PrefixText = string.Empty;
-            tab.SuffixText = string.Empty;
+
+            // Clear ONLY the active suffix tab's suffix text.
+            if (tab.ActiveSuffixTab != null)
+            {
+                tab.ActiveSuffixTab.SuffixText = string.Empty;
+                tab.ActiveSuffixTab.IsResolved = false; // clearing changes meaning; mark unresolved
+            }
         }
 
         private void btnPastePath_Click(object sender, RoutedEventArgs e)
@@ -258,6 +302,7 @@ namespace FilesToClipboard
             foreach (string line in lines)
             {
                 string path = line.Trim().Trim('"').Trim('\'');
+
                 if (string.IsNullOrWhiteSpace(path))
                     continue;
 
@@ -411,35 +456,115 @@ namespace FilesToClipboard
             e.Handled = true;
         }
 
+        // === Insert file-name fix ===
+
+        private void TextBox_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+        {
+            RememberTextTarget(sender as TextBox);
+        }
+
+        private void TextBox_SelectionChanged(object sender, RoutedEventArgs e)
+        {
+            RememberTextTarget(sender as TextBox);
+        }
+
+        private void InsertNameButton_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            // Capture caret/selection BEFORE focus moves off the TextBox.
+            RememberTextTarget(Keyboard.FocusedElement as TextBox);
+        }
+
+        private void RememberTextTarget(TextBox tb)
+        {
+            if (tb == null) return;
+            _lastTextTarget = tb;
+            _lastSelectionStart = tb.SelectionStart;
+            _lastSelectionLength = tb.SelectionLength;
+        }
+
         private void btnInsertName_Click(object sender, RoutedEventArgs e)
         {
             var filePath = (string)((FrameworkElement)sender).DataContext;
             if (string.IsNullOrEmpty(filePath)) return;
 
-            var target = Keyboard.FocusedElement as TextBox;
-            if (target == null) return;
+            var target = _lastTextTarget;
+            if (target == null)
+            {
+                MessageBox.Show("Click in the Prefix or Suffix textbox first, then try inserting the name again.",
+                                "No Target TextBox",
+                                MessageBoxButton.OK,
+                                MessageBoxImage.Information);
+                return;
+            }
 
             string nameWithoutExt = Path.GetFileNameWithoutExtension(filePath);
-            int caret = target.CaretIndex;
 
             string original = target.Text ?? string.Empty;
-            target.Text = original.Insert(caret, nameWithoutExt);
-            target.CaretIndex = caret + nameWithoutExt.Length;
-            target.Focus();
+
+            int start = Math.Max(0, Math.Min(_lastSelectionStart, original.Length));
+            int length = Math.Max(0, Math.Min(_lastSelectionLength, original.Length - start));
+
+            string updated;
+            int newCaret;
+
+            if (length > 0)
+            {
+                // Replace selection (more intuitive than ignoring selection).
+                updated = original.Remove(start, length).Insert(start, nameWithoutExt);
+                newCaret = start + nameWithoutExt.Length;
+            }
+            else
+            {
+                int caret = Math.Max(0, Math.Min(target.CaretIndex, original.Length));
+                updated = original.Insert(caret, nameWithoutExt);
+                newCaret = caret + nameWithoutExt.Length;
+            }
+
+            target.Text = updated;
+            target.SelectionStart = newCaret;
+            target.SelectionLength = 0;
+            target.CaretIndex = newCaret;
+
+            // Re-focus the textbox immediately so typing can continue.
+            target.Dispatcher.BeginInvoke(new Action(() =>
+            {
+                target.Focus();
+                Keyboard.Focus(target);
+                target.CaretIndex = newCaret;
+                target.SelectionStart = newCaret;
+                target.SelectionLength = 0;
+            }), DispatcherPriority.Input);
+
+            RememberTextTarget(target);
         }
+
+        // === Tab controls ===
 
         private void AddTabButton_Click(object sender, RoutedEventArgs e)
         {
             AddNewTab();
         }
 
+        private void AddSuffixTabButton_Click(object sender, RoutedEventArgs e)
+        {
+            var collector = (sender as FrameworkElement)?.DataContext as CollectorTab;
+            if (collector == null) return;
+
+            var st = collector.AddNewSuffixTab();
+            collector.ActiveSuffixTab = st;
+
+            UpdateAllUnderlineBrushes();
+        }
+
         private void TabCloseButton_Click(object sender, RoutedEventArgs e)
         {
             var button = (Button)sender;
             var tabItem = FindParent<TabItem>(button);
-            if (tabItem?.DataContext is CollectorTab tab)
+
+            // Close FIRST-level tab
+            if (tabItem?.DataContext is CollectorTab collectorTab)
             {
-                Tabs.Remove(tab);
+                Tabs.Remove(collectorTab);
 
                 if (Tabs.Count == 0)
                 {
@@ -451,7 +576,31 @@ namespace FilesToClipboard
                     tabControl.SelectedItem = Tabs.Last();
                 }
 
-                UpdateTabUnderlineBrushes();
+                UpdateAllUnderlineBrushes();
+                return;
+            }
+
+            // Close SECOND-level (suffix) tab
+            if (tabItem?.DataContext is SuffixTab suffixTab)
+            {
+                var suffixTabControl = FindParent<TabControl>(button);
+                var owner = suffixTabControl?.DataContext as CollectorTab;
+                if (owner == null) return;
+
+                owner.SuffixTabs.Remove(suffixTab);
+
+                if (owner.SuffixTabs.Count == 0)
+                {
+                    var newOne = owner.AddNewSuffixTab();
+                    owner.ActiveSuffixTab = newOne;
+                }
+                else
+                {
+                    if (owner.ActiveSuffixTab == null || !owner.SuffixTabs.Contains(owner.ActiveSuffixTab))
+                        owner.ActiveSuffixTab = owner.SuffixTabs.Last();
+                }
+
+                UpdateAllUnderlineBrushes();
             }
         }
 
@@ -474,15 +623,29 @@ namespace FilesToClipboard
     {
         public ObservableCollection<string> SelectedPaths { get; } = new ObservableCollection<string>();
 
+        public ObservableCollection<SuffixTab> SuffixTabs { get; } = new ObservableCollection<SuffixTab>();
+
         private string _prefixText;
-        private string _suffixText;
-        private bool _isResolved;
         private Brush _underlineBrush = Brushes.Transparent;
+
+        // Derived: resolved only when ALL suffix tabs are resolved
+        private bool _isResolved;
+
+        private SuffixTab _activeSuffixTab;
 
         public CollectorTab()
         {
             CreatedAt = DateTime.UtcNow;
+
             SelectedPaths.CollectionChanged += SelectedPaths_CollectionChanged;
+
+            SuffixTabs.CollectionChanged += SuffixTabs_CollectionChanged;
+
+            // Ensure at least one suffix tab exists
+            var initial = AddNewSuffixTab();
+            ActiveSuffixTab = initial;
+
+            UpdateDerivedResolved();
         }
 
         public DateTime CreatedAt { get; }
@@ -498,6 +661,117 @@ namespace FilesToClipboard
             }
         }
 
+        public SuffixTab ActiveSuffixTab
+        {
+            get => _activeSuffixTab;
+            set
+            {
+                if (_activeSuffixTab == value) return;
+                _activeSuffixTab = value;
+                OnPropertyChanged(nameof(ActiveSuffixTab));
+            }
+        }
+
+        // First-level tab background rule:
+        // - If ANY second-level tab is unresolved => IsResolved=false => show unresolved background
+        // - Else => IsResolved=true => transparent
+        public bool IsResolved
+        {
+            get => _isResolved;
+            private set
+            {
+                if (_isResolved == value) return;
+                _isResolved = value;
+                OnPropertyChanged(nameof(IsResolved));
+            }
+        }
+
+        // First-level underline = newest suffix tab's underline (assigned from MainWindow.UpdateAllUnderlineBrushes)
+        public Brush UnderlineBrush
+        {
+            get => _underlineBrush;
+            set
+            {
+                if (_underlineBrush == value) return;
+                _underlineBrush = value;
+                OnPropertyChanged(nameof(UnderlineBrush));
+            }
+        }
+
+        public string Header
+        {
+            get
+            {
+                int count = SelectedPaths.Count;
+                string firstName = count > 0 ? Path.GetFileName(SelectedPaths[0]) : "Empty";
+                return $"({count})-{firstName}";
+            }
+        }
+
+        public SuffixTab AddNewSuffixTab()
+        {
+            var st = new SuffixTab();
+            SuffixTabs.Add(st);
+            return st;
+        }
+
+        private void SelectedPaths_CollectionChanged(object sender, NotifyCollectionChangedEventArgs e)
+        {
+            OnPropertyChanged(nameof(Header));
+        }
+
+        private void SuffixTabs_CollectionChanged(object sender, NotifyCollectionChangedEventArgs e)
+        {
+            if (e.OldItems != null)
+            {
+                foreach (SuffixTab st in e.OldItems)
+                    st.PropertyChanged -= SuffixTab_PropertyChanged;
+            }
+
+            if (e.NewItems != null)
+            {
+                foreach (SuffixTab st in e.NewItems)
+                    st.PropertyChanged += SuffixTab_PropertyChanged;
+            }
+
+            if (ActiveSuffixTab == null || !SuffixTabs.Contains(ActiveSuffixTab))
+                ActiveSuffixTab = SuffixTabs.LastOrDefault();
+
+            UpdateDerivedResolved();
+        }
+
+        private void SuffixTab_PropertyChanged(object sender, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(SuffixTab.IsResolved))
+            {
+                UpdateDerivedResolved();
+            }
+        }
+
+        private void UpdateDerivedResolved()
+        {
+            IsResolved = !SuffixTabs.Any(s => s.IsResolved == false);
+        }
+
+        public event PropertyChangedEventHandler PropertyChanged;
+
+        protected virtual void OnPropertyChanged(string propertyName)
+            => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
+
+    public class SuffixTab : INotifyPropertyChanged
+    {
+        private string _suffixText;
+        private bool _isResolved;
+        private Brush _underlineBrush = Brushes.Transparent;
+
+        public SuffixTab()
+        {
+            CreatedAt = DateTime.UtcNow;
+        }
+
+        public DateTime CreatedAt { get; }
+
         public string SuffixText
         {
             get => _suffixText;
@@ -506,6 +780,7 @@ namespace FilesToClipboard
                 if (_suffixText == value) return;
                 _suffixText = value;
                 OnPropertyChanged(nameof(SuffixText));
+                OnPropertyChanged(nameof(Header));
             }
         }
 
@@ -535,15 +810,18 @@ namespace FilesToClipboard
         {
             get
             {
-                int count = SelectedPaths.Count;
-                string firstName = count > 0 ? Path.GetFileName(SelectedPaths[0]) : "Empty";
-                return $"({count})-{firstName}";
-            }
-        }
+                // Make tab label stable & compact:
+                // - First non-empty line of suffix, else "Suffix"
+                // - Truncate to keep headers readable
+                var firstLine = (_suffixText ?? string.Empty)
+                    .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(l => l.Trim())
+                    .FirstOrDefault(l => !string.IsNullOrWhiteSpace(l));
 
-        private void SelectedPaths_CollectionChanged(object sender, NotifyCollectionChangedEventArgs e)
-        {
-            OnPropertyChanged(nameof(Header));
+                var label = string.IsNullOrWhiteSpace(firstLine) ? "Suffix" : firstLine;
+                if (label.Length > 26) label = label.Substring(0, 26) + "…";
+                return label;
+            }
         }
 
         public event PropertyChangedEventHandler PropertyChanged;
