@@ -1,10 +1,6 @@
 Purpose Source License 1.0
 https://purposesource.org
 
-Copyright (C) 2026 Purpose Source Association
-Everyone is permitted to copy and distribute verbatim copies of this licence
-document, but changing it is not allowed.
-
 Summary
 
 This summary is not part of the licence terms; the terms below govern.
@@ -381,3 +377,7 @@ these terms do not exclude it.
 
 If any of these terms cannot be enforced, the rest still apply. Nobody loses a
 right here by not enforcing it at once.
+
+Licence text copyright (C) 2026 Purpose Source Association
+Everyone is permitted to copy and distribute verbatim copies of this licence
+document, but changing it is not allowed.
